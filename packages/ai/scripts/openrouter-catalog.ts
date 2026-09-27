@@ -20,6 +20,45 @@ export interface OpenRouterModelListItem {
 	reasoning?: OpenRouterReasoningMetadata;
 }
 
+/**
+ * Item shape of the Alibaba Cloud Bailian `GET /api/v1/models` listing.
+ * Note `provider` is the model author (e.g. `qwen`) while `inference_provider`
+ * is the serving vendor (e.g. `aliyun-bailian`); they are orthogonal.
+ */
+export interface QwenModelListItem {
+	model: string;
+	name: string;
+	description?: string;
+	provider?: string;
+	inference_provider?: string;
+	capabilities?: string[];
+	features?: string[];
+	published_time?: string | null;
+	inference_metadata?: {
+		request_modality?: string[];
+		response_modality?: string[];
+	};
+	model_info?: {
+		context_window?: number | null;
+		max_input_tokens?: number | null;
+		max_output_tokens?: number | null;
+		max_reasoning_tokens?: number | null;
+		reasoning_max_input_tokens?: number | null;
+		reasoning_max_output_tokens?: number | null;
+	};
+	prices?: {
+		range_name: string;
+		prices: {
+			type: string;
+			price: string;
+			price_unit: string;
+			price_name: string;
+		}[];
+	}[];
+	equivalent_snapshot?: string;
+	inference_offline_info?: Record<string, { offline_time?: string }>;
+}
+
 export interface OpenRouterCatalog {
 	chat: Model<"anthropic-messages" | "openai-completions">[];
 	images: ImageModel<"openrouter-images">[];

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
+import { hasApi } from "../src/models.ts";
 import type { Model } from "../src/types.ts";
 
 interface FakeOpenAIClientOptions {
@@ -171,10 +172,11 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBe("session-affinity");
 	});
 
-	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+	it.each(["accounts/fireworks/models/glm-5p3", "accounts/fireworks/routers/glm-5p3-fast"] as const)(
 		"sends Fireworks session affinity for %s",
 		async (modelId) => {
 			const model = getModel("fireworks", modelId);
+			if (!hasApi(model, "openai-completions")) throw new Error(`Expected OpenAI-compatible model for ${modelId}`);
 			const { headers } = await captureRequest({ sessionId: "fireworks-session" }, model);
 
 			expect(headers["x-session-affinity"]).toBe("fireworks-session");
