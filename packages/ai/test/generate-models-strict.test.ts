@@ -52,6 +52,9 @@ describe("strict model generation", () => {
 				`  if (String(input) === "https://models.dev/api.json") {\n` +
 				`    return new Response(JSON.stringify(catalog), { status: 200 });\n` +
 				`  }\n` +
+				`  if (String(input).includes(".maas.aliyuncs.com/api/v1/models")) {\n` +
+				`    return Response.json({ success: true, output: { models: [] } });\n` +
+				`  }\n` +
 				`  throw new Error(\`Unexpected fetch: \${String(input)}\`);\n` +
 				`};\n`,
 		);

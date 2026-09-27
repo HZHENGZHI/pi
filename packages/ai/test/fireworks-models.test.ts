@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel, normalizeContext, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
-import { getSupportedThinkingLevels } from "../src/models.ts";
+import { getSupportedThinkingLevels, hasApi } from "../src/models.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
 const originalFireworksApiKey = process.env.FIREWORKS_API_KEY;
@@ -19,8 +19,8 @@ afterEach(() => {
 });
 
 describe("Fireworks models", () => {
-	it("registers the default Kimi K2.6 model via Anthropic-compatible Messages API", () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/kimi-k2p6");
+	it("registers the default Inkling model via Anthropic-compatible Messages API", () => {
+		const model = getModel("fireworks", "accounts/fireworks/models/inkling");
 
 		expect(model).toBeDefined();
 		expect(model.api).toBe("anthropic-messages");
@@ -28,19 +28,19 @@ describe("Fireworks models", () => {
 		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference");
 		expect(model.reasoning).toBe(true);
 		expect(model.input).toEqual(["text", "image"]);
-		expect(model.contextWindow).toBe(262000);
-		expect(model.maxTokens).toBe(262000);
+		expect(model.contextWindow).toBe(1048576);
+		expect(model.maxTokens).toBe(1048576);
 		expect(model.cost).toEqual({
-			input: 0.95,
-			output: 4,
-			cacheRead: 0.16,
+			input: 1,
+			output: 4.05,
+			cacheRead: 0.17,
 			cacheWrite: 0,
 		});
 	});
 
-	it("aligns GLM 5.2 Fast with GLM 5.2's OpenAI-compatible config", () => {
-		const base = getModel("fireworks", "accounts/fireworks/models/glm-5p2");
-		const fast = getModel("fireworks", "accounts/fireworks/routers/glm-5p2-fast");
+	it("aligns GLM 5.3 Fast with GLM 5.3's OpenAI-compatible config", () => {
+		const base = getModel("fireworks", "accounts/fireworks/models/glm-5p3");
+		const fast = getModel("fireworks", "accounts/fireworks/routers/glm-5p3-fast");
 
 		expect(fast.api).toBe(base.api);
 		expect(fast.baseUrl).toBe(base.baseUrl);
@@ -48,7 +48,7 @@ describe("Fireworks models", () => {
 		expect(fast.thinkingLevelMap).toEqual(base.thinkingLevelMap);
 	});
 
-	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+	it.each(["accounts/fireworks/models/glm-5p3", "accounts/fireworks/routers/glm-5p3-fast"] as const)(
 		"omits unsupported long cache retention for %s",
 		async (modelId) => {
 			const model = getModel("fireworks", modelId);
@@ -126,14 +126,14 @@ describe("Fireworks models", () => {
 
 	// Regression for #9323: native effort must reach Messages without budget-based fallback.
 	it.each([
-		["accounts/fireworks/models/deepseek-v4-flash-0731", ["off", "low", "high", "max"]],
-		["accounts/fireworks/models/deepseek-v4-flash-vision-exp", ["off", "low", "high", "max"]],
-		["accounts/fireworks/models/deepseek-v4-pro-0813", ["off", "low", "high", "max"]],
+		["accounts/fireworks/models/deepseek-v4p1-flash", ["off", "low", "high", "max"]],
+		["accounts/fireworks/routers/deepseek-flash-latest", ["off", "low", "high", "max"]],
 		["accounts/fireworks/models/qwen3p8-max", ["off", "low", "medium", "xhigh"]],
 		["accounts/fireworks/models/qwen3p8-2p4t-a95b", ["off", "low", "medium", "xhigh"]],
 	] as const)("sends native Messages effort levels for %s", async (modelId, levels) => {
 		const model = getModel("fireworks", modelId);
 		expect(model.api).toBe("anthropic-messages");
+		if (!hasApi(model, "anthropic-messages")) throw new Error(`Expected Messages model for ${modelId}`);
 		expect(model.compat?.forceAdaptiveThinking).toBe(true);
 		expect(getSupportedThinkingLevels(model)).toEqual(levels);
 
@@ -161,8 +161,8 @@ describe("Fireworks models", () => {
 
 	// Regression for #9323: accepted aliases are not distinct native effort levels.
 	it.each([
-		["accounts/fireworks/models/glm-5p2", ["off", "high", "max"]],
-		["accounts/fireworks/routers/glm-5p2-fast", ["off", "high", "max"]],
+		["accounts/fireworks/models/glm-5p3", ["low", "high", "max"]],
+		["accounts/fireworks/routers/glm-5p3-fast", ["low", "high", "max"]],
 		["accounts/fireworks/models/kimi-k3", ["low", "high", "max"]],
 		["accounts/fireworks/routers/kimi-k3-fast", ["low", "high", "max"]],
 	] as const)("exposes distinct native effort levels for %s", (modelId, levels) => {
@@ -170,7 +170,8 @@ describe("Fireworks models", () => {
 	});
 
 	it("keeps toggle-only Messages models without a verified fallback on budget-based thinking", async () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/kimi-k2p6");
+		const model = getModel("fireworks", "accounts/fireworks/models/inkling");
+		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
 		expect(model.compat?.forceAdaptiveThinking).toBeUndefined();
 		let payload: Record<string, unknown> | undefined;
 		await streamSimple(
@@ -197,7 +198,8 @@ describe("Fireworks models", () => {
 	});
 
 	it("sets Fireworks-specific compat for session affinity and unsupported tool fields", () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/kimi-k2p6");
+		const model = getModel("fireworks", "accounts/fireworks/models/inkling");
+		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
 
 		expect(model.compat).toBeDefined();
 		expect(model.compat?.sendSessionAffinityHeaders).toBe(true);
@@ -233,16 +235,16 @@ function createFireworksModel(
 	compat: Model<"anthropic-messages">["compat"] = FIREWORKS_ANTHROPIC_COMPAT,
 ): Model<"anthropic-messages"> {
 	return {
-		id: "accounts/fireworks/models/kimi-k2p6",
-		name: "Kimi K2.6",
+		id: "accounts/fireworks/models/inkling",
+		name: "Inkling",
 		api: "anthropic-messages",
 		provider: "fireworks",
 		baseUrl: "http://127.0.0.1:0", // overridden by captureAnthropicRequest
 		reasoning: true,
 		input: ["text", "image"],
-		cost: { input: 0.95, output: 4, cacheRead: 0.16, cacheWrite: 0 },
-		contextWindow: 262000,
-		maxTokens: 262000,
+		cost: { input: 1, output: 4.05, cacheRead: 0.17, cacheWrite: 0 },
+		contextWindow: 1048576,
+		maxTokens: 1048576,
 		compat,
 	};
 }

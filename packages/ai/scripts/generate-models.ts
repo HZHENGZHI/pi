@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
-import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
+import { buildOpenRouterCatalog, type QwenModelListItem, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -41,6 +41,7 @@ import {
 	getRadiusModelsFromConfig,
 	loadRadiusGatewayConfig,
 } from "../src/providers/radius-config.ts";
+import { getProviderEnvValue } from "../src/utils/provider-env.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -974,9 +975,9 @@ function applyImageInputMetadata(model: AnyModel): void {
 	const providerLimits: AnyModel["inputLimits"] =
 		model.provider === "anthropic"
 			? {
-					maxRequestBytes: 32 * 1024 * 1024,
-					images: { maxPerRequest: model.type !== "image" && model.contextWindow === 200000 ? 100 : 600 },
-				}
+				maxRequestBytes: 32 * 1024 * 1024,
+				images: { maxPerRequest: model.type !== "image" && model.contextWindow === 200000 ? 100 : 600 },
+			}
 			: model.provider === "amazon-bedrock"
 				? { images: { maxPerMessage: 20 } }
 				: model.provider === "openai"
@@ -1315,6 +1316,101 @@ async function fetchRadiusModels(): Promise<Model<"pi-messages">[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch Radius models:", error);
+		if (generatorOptions.strict) throw error;
+		return [];
+	}
+}
+
+async function fetchQwenModels(): Promise<Model<any>[]> {
+	const workspaceId = getProviderEnvValue("QWEN_WORKSPACE_ID_ENV");
+	const qwenAPIKey = getProviderEnvValue("QWEN_API_KEY");
+	if (!workspaceId || !qwenAPIKey) {
+		// The Qwen catalog lives behind workspace credentials, so generation must
+		// stay possible without them (CI, contributor machines, other providers).
+		console.log("Skipping Qwen models: QWEN_WORKSPACE_ID_ENV and QWEN_API_KEY are not set");
+		return [];
+	}
+
+	try {
+		console.log("Fetching models from the Qwen API...");
+		const url = new URL(`https://${workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models`);
+		const providers: string[] = ["qwen", "qwen-domain-model"];
+		for (const provider of providers) url.searchParams.append("providers", provider);
+		const response = await fetch(url, {
+			headers: {
+				Authorization: `Bearer ${qwenAPIKey}`,
+				"Content-Type": "application/json",
+			},
+		});
+		if (!response.ok) throw new Error(`Qwen API returned ${response.status}`);
+		const data = (await response.json()) as {
+			success?: boolean;
+			output: { total?: number; models?: QwenModelListItem[] };
+		};
+		const models: Model<any>[] = [];
+		const items = Array.isArray(data.output?.models) ? (data.output.models as QwenModelListItem[]) : [];
+		const processProvider = function (provider: string): string {
+			switch (provider) {
+				case "qwen-domain-model":
+					return "qwen";
+				case "qwen":
+					return "qwen";
+				case "wan":
+					return "qwen";
+				case "happyhorse":
+					return "qwen";
+				default:
+					return provider;
+			}
+		};
+		const modalitites = function (values: string[] | undefined): ("text" | "image")[] {
+			const normalized = (values ?? []).map((value) => value.toLowerCase());
+			return Array.from(new Set(normalized.filter((v): v is "text" | "image" => v === "text" || v === "image")));
+		};
+		const qwenPrice = function (
+			model: QwenModelListItem,
+			type: "input_token" | "output_token" | "input_token_cache" | "output_token_cache",
+		): number | undefined {
+			for (const tier of model.prices ?? []) {
+				for (const price of tier.prices ?? []) {
+					if (price.type !== type) continue;
+					return Number(price.price);
+				}
+			}
+			return undefined;
+		};
+		for (const model of items) {
+			if (modalitites(model.inference_metadata?.request_modality).length === 0) {
+				continue;
+			}
+			models.push({
+				id: model.model,
+				name: model.name,
+				api: "openai-completions",
+				baseUrl: `https://${workspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`,
+				provider: model.provider ? processProvider(model.provider) : "qwen",
+				reasoning: model.capabilities?.includes("Reasoning") || false,
+				input: modalitites(model.inference_metadata?.request_modality),
+				compat: {
+					thinkingFormat: "qwen",
+					supportsDeveloperRole: false,
+					supportsStore: false,
+					supportsReasoningEffort: model.capabilities?.includes("Reasoning") || false,
+				},
+				cost: {
+					input: qwenPrice(model, "input_token") || 0,
+					output: qwenPrice(model, "output_token") || 0,
+					cacheRead: qwenPrice(model, "input_token_cache") || 0,
+					cacheWrite: qwenPrice(model, "output_token_cache") || 0,
+				},
+				contextWindow: model.model_info?.context_window || 4096,
+				maxTokens: model.model_info?.max_input_tokens || 4096,
+			});
+		}
+		console.log(`Fetched ${models.length} models from the Qwen API`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Qwen models:", error);
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
@@ -1693,7 +1789,7 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 				compat: {
 					...anthropicCompat,
 					...(model.reasoning_options?.some((option) => option.type === "effort") ||
-					FIREWORKS_ADAPTIVE_THINKING_FALLBACK_MODELS.has(modelId)
+						FIREWORKS_ADAPTIVE_THINKING_FALLBACK_MODELS.has(modelId)
 						? { forceAdaptiveThinking: true }
 						: {}),
 				},
@@ -1706,6 +1802,7 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 }
 
 async function loadModelsDevData(): Promise<Model<any>[]> {
+
 	try {
 		console.log("Fetching models from models.dev API...");
 		const response = await fetch("https://models.dev/api.json");
@@ -2678,9 +2775,10 @@ async function generateModels() {
 	const openRouterCatalog = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
+	const qwenModels = await fetchQwenModels();
 
 	// Combine chat models (models.dev has priority where sources overlap).
-	const allModels = [...modelsDevModels, ...openRouterCatalog.chat, ...aiGatewayModels, ...radiusModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterCatalog.chat, ...aiGatewayModels, ...radiusModels, ...qwenModels].filter(
 		(model) =>
 			!(model.provider === "xai" && XAI_BUILTIN_EXCLUDED_MODEL_IDS.has(model.id)) &&
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
@@ -3056,9 +3154,9 @@ async function generateModels() {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort
 					? {
-							requiresReasoningContentOnAssistantMessages:
-								deepseekCompat.requiresReasoningContentOnAssistantMessages,
-						}
+						requiresReasoningContentOnAssistantMessages:
+							deepseekCompat.requiresReasoningContentOnAssistantMessages,
+					}
 					: deepseekCompat),
 			};
 		}
@@ -3218,10 +3316,10 @@ async function generateModels() {
 			cost: {
 				// we dont know about the costs because OpenRouter auto routes to different models
 				// and then charges you for the underlying used model
-				input:0,
-				output:0,
-				cacheRead:0,
-				cacheWrite:0,
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
 			},
 			contextWindow: 2000000,
 			maxTokens: 30000,

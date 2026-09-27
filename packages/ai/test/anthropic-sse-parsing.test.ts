@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { transformMessages } from "../src/api/transform-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
+import { hasApi } from "../src/models.ts";
 import type { Api, Model, ToolCall } from "../src/types.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
@@ -281,11 +282,12 @@ describe("Anthropic raw SSE parsing", () => {
 			},
 		} as unknown as Anthropic;
 
-		await streamAnthropic(
-			getModel("openrouter", "anthropic/claude-3-haiku"),
-			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
-			{ client, thinkingEnabled: false },
-		).result();
+		const model = getModel("openrouter", "anthropic/claude-haiku-4.5");
+		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
+		await streamAnthropic(model, normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }), {
+			client,
+			thinkingEnabled: false,
+		}).result();
 
 		expect(betaFeatures ?? []).not.toContain("interleaved-thinking-2025-05-14");
 	});
