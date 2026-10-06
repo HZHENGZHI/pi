@@ -108,10 +108,9 @@ describe("Anthropic empty thinking signature compat", () => {
 	// Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
 	it.each([
 		"accounts/fireworks/models/deepseek-v4p1-flash",
-		"accounts/fireworks/routers/deepseek-flash-latest",
 		"accounts/fireworks/models/qwen3p8-max",
 		"accounts/fireworks/models/qwen3p8-2p4t-a95b",
-		"accounts/fireworks/models/inkling",
+		"accounts/fireworks/models/nemotron-3-ultra-nvfp4",
 	] as const)("preserves unsigned thinking for Fireworks %s", async (modelId) => {
 		const model = getModel("fireworks", modelId);
 		expect(model.api).toBe("anthropic-messages");
@@ -130,10 +129,9 @@ describe("Anthropic empty thinking signature compat", () => {
 	// Regression for #9323: opting into unsigned replay must not change cross-model conversion.
 	it("still converts cross-model Fireworks thinking to text", async () => {
 		const model = getModel("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash");
-		if (!hasApi(model, "anthropic-messages")) throw new Error("Expected Messages model");
 		const payload = await capturePayload(
 			model,
-			makeContext("", "internal reasoning", "fireworks", "accounts/fireworks/models/inkling"),
+			makeContext("", "internal reasoning", "fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
 		);
 		expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
 			{ type: "text", text: "internal reasoning" },
